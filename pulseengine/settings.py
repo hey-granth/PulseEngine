@@ -5,6 +5,7 @@ Single settings file — no dev/prod split.
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 import dj_database_url
@@ -126,9 +127,10 @@ DATABASES["default"]["TEST"] = {
     "HOST": _test_db_host,
     "PORT": _test_db_port,
 }
-# Disable connection pooling for tests — prevents lingering sessions that block
-# DROP DATABASE between runs (especially after concurrency tests).
-if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("CI"):
+# Disable connection pooling during tests — prevents lingering sessions that
+# block DROP DATABASE between runs (especially after concurrency tests).
+_running_tests = "test" in sys.argv or os.environ.get("CI")
+if _running_tests:
     DATABASES["default"]["CONN_MAX_AGE"] = 0
 
 # Startup log — confirms external DB is in use, never logs credentials.
@@ -171,6 +173,7 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
+CELERY_TASK_ALWAYS_EAGER = True  # Tasks run synchronously during tests
 
 # ── Elasticsearch ───────────────────────────────────────────────────────────
 ELASTICSEARCH_URL = _require_env("ELASTICSEARCH_URL")
