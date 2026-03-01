@@ -3,9 +3,12 @@ Django settings for PulseEngine project.
 Single settings file — no dev/prod split.
 """
 
+import logging
 import os
 from pathlib import Path
 
+import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -83,17 +86,53 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "pulseengine.wsgi.application"
 
-# ── Database (PostgreSQL) ───────────────────────────────────────────────────
+# ── Database (Neon PostgreSQL via DATABASE_URL) ─────────────────────────────
+_DATABASE_URL = os.environ.get("DATABASE_URL")
+if not _DATABASE_URL:
+    raise ImproperlyConfigured(
+        "Environment variable 'DATABASE_URL' is required but not set. "
+        "Add it to your .env file (e.g. postgres://user:pass@host/db?sslmode=require)."
+    )
+
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": _require_env("DATABASE_NAME"),
-        "USER": _require_env("DATABASE_USER"),
-        "PASSWORD": os.environ.get("DATABASE_PASSWORD", ""),
-        "HOST": os.environ.get("DATABASE_HOST", ""),
-        "PORT": os.environ.get("DATABASE_PORT", "5432"),
-    }
+    "default": dj_database_url.parse(
+        _DATABASE_URL,
+        conn_max_age=600,
+        ssl_require=True,
+    )
 }
+
+# Enforce ENGINE and sslmode — never allow insecure or non-postgres connection.
+if DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql":
+    raise ImproperlyConfigured(
+        f"DATABASE_URL must resolve to a PostgreSQL backend, got: "
+        f"{DATABASES['default']['ENGINE']}"
+    )
+DATABASES["default"].setdefault("OPTIONS", {})
+DATABASES["default"]["OPTIONS"]["sslmode"] = "require"
+
+# ── Test database override ───────────────────────────────────────────────────
+# When running pytest, use a local Postgres test DB instead of Neon.
+# This is populated by conftest.py via TEST_DATABASE_URL or falls back to
+# the individual DATABASE_* env vars. Never runs against the real Neon DB.
+_test_db_name = os.environ.get("TEST_DB_NAME", "test_pulseengine")
+_test_db_user = os.environ.get("DATABASE_USER", "")
+_test_db_host = os.environ.get("DATABASE_HOST", "")
+_test_db_port = os.environ.get("DATABASE_PORT", "5432")
+DATABASES["default"]["TEST"] = {
+    "NAME": _test_db_name,
+    "USER": _test_db_user,
+    "PASSWORD": os.environ.get("DATABASE_PASSWORD", ""),
+    "HOST": _test_db_host,
+    "PORT": _test_db_port,
+}
+# Disable connection pooling for tests — prevents lingering sessions that block
+# DROP DATABASE between runs (especially after concurrency tests).
+if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("CI"):
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
+
+# Startup log — confirms external DB is in use, never logs credentials.
+logging.getLogger(__name__).info("Using external PostgreSQL via DATABASE_URL")
 
 # ── Password validators ────────────────────────────────────────────────────
 AUTH_PASSWORD_VALIDATORS = [

@@ -16,6 +16,60 @@ from posts.models import Post
 User = get_user_model()
 
 
+# ── Inject DATABASE_URL for tests if not already present ────────────────────
+# Settings now require DATABASE_URL (Neon). In CI/local dev the individual
+# DATABASE_* vars may be set instead. Build a DATABASE_URL from them so tests
+# run without modifying .env.
+def _ensure_database_url() -> None:
+    if os.environ.get("DATABASE_URL"):
+        return  # Already set — Neon URL or CI-injected, nothing to do.
+
+    user = os.environ.get("DATABASE_USER", "")
+    password = os.environ.get("DATABASE_PASSWORD", "")
+    host = os.environ.get("DATABASE_HOST", "")
+    port = os.environ.get("DATABASE_PORT", "5432")
+    name = os.environ.get("DATABASE_NAME", "pulseengine")
+
+    if host:
+        # TCP connection (e.g. Docker Postgres)
+        auth = f"{user}:{password}@" if password else (f"{user}@" if user else "")
+        url = f"postgresql://{auth}{host}:{port}/{name}"
+    else:
+        # Unix socket / peer auth (local dev)
+        auth = f"{user}@" if user else ""
+        url = f"postgresql://{auth}/{name}"
+
+    os.environ["DATABASE_URL"] = url
+
+
+_ensure_database_url()
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def pytest_configure(config):
+    """
+    Kill any lingering connections to test_pulseengine before the session
+    starts. This prevents 'database is being accessed by other users' errors
+    that occur when concurrency tests leave open ThreadPoolExecutor connections.
+    """
+    import subprocess
+    db_name = os.environ.get("TEST_DB_NAME", "test_pulseengine")
+    try:
+        subprocess.run(
+            [
+                "psql",
+                os.environ.get("DATABASE_NAME", "pulseengine"),
+                "-c",
+                f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                f"WHERE datname='{db_name}' AND pid != pg_backend_pid();",
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        pass  # Not fatal — if psql isn't available or DB is unreachable, carry on.
+
+
 @pytest.fixture(autouse=True)
 def _flush_redis(request):
     """Flush Redis before each test that uses DB (to avoid stale ranking data)."""
