@@ -7,4 +7,3 @@ class EngagementSerializer(serializers.Serializer):
     detail = serializers.CharField()
     post_id = serializers.IntegerField()
     type = serializers.CharField()
-

@@ -1,39 +1,26 @@
 """
-Concurrency tests — 100 parallel likes, no duplicates, correct final count.
-Uses TransactionTestCase (real DB transactions) and fakeredis.
+Concurrency tests — parallel likes, no duplicates, correct final count.
+Uses TransactionTestCase (real DB transactions) and real Redis namespace isolation.
 """
 
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from unittest.mock import patch
 
-import fakeredis
 from django import db as django_db
 from django.contrib.auth import get_user_model
-from django.test import TransactionTestCase
 from rest_framework.test import APIClient
 
 from categories.models import Category
 from engagement.models import EngagementEvent, EngagementType, UserPostLike
 from posts.models import Post
-from ranking.constants import dirty_posts_key, engagement_hash_key, category_leaderboard_key
 from ranking.tasks import merge_global_leaderboard, recalculate_dirty_scores
+from tests.base import RealRedisTransactionTestCase
 
 User = get_user_model()
 
 
-class TestConcurrentLikes(TransactionTestCase):
+class TestConcurrentLikes(RealRedisTransactionTestCase):
     """100 parallel likes — no duplicates, correct final ranking."""
-
-    def setUp(self):
-        self.fake_redis = fakeredis.FakeRedis(decode_responses=True)
-        for target in (
-            "engagement.views._get_redis",
-            "ranking.tasks._get_redis",
-        ):
-            p = patch(target, return_value=self.fake_redis)
-            self.addCleanup(p.stop)
-            p.start()
 
     def test_100_parallel_likes_no_duplicates(self):
         admin = User.objects.create_user(username="admin_conc", password="pass")
@@ -41,8 +28,7 @@ class TestConcurrentLikes(TransactionTestCase):
         post = Post.objects.create(author=admin, category=cat, content="Concurrent test")
 
         users = [
-            User.objects.create_user(username=f"concuser{i}", password="pass")
-            for i in range(100)
+            User.objects.create_user(username=f"concuser{i}", password="pass") for i in range(100)
         ]
 
         results = {"success": 0, "conflict": 0, "error": 0}
@@ -73,9 +59,9 @@ class TestConcurrentLikes(TransactionTestCase):
         self.assertEqual(
             EngagementEvent.objects.filter(post=post, type=EngagementType.LIKE).count(), 100
         )
-        likes_in_redis = self.fake_redis.hget(engagement_hash_key(post.pk), "likes")
+        likes_in_redis = self.r.hget(self.engagement_hash_key(post.pk), "likes")
         self.assertEqual(int(likes_in_redis), 100)
-        self.assertIsNotNone(self.fake_redis.zscore(dirty_posts_key(), str(post.pk)))
+        self.assertIsNotNone(self.r.zscore(self.dirty_posts_key(), str(post.pk)))
 
     def test_duplicate_likes_from_same_user_concurrent(self):
         user = User.objects.create_user(username="dupe_conc", password="pass")
@@ -115,26 +101,30 @@ class TestConcurrentLikes(TransactionTestCase):
 
         for i in range(50):
             u = User.objects.create_user(username=f"rc1u{i}", password="pass")
-            APIClient().force_authenticate(user=u)
             client = APIClient()
             client.force_authenticate(user=u)
             client.post(f"/posts/{p1.pk}/like/")
+            django_db.close_old_connections()
 
         for i in range(10):
             u = User.objects.create_user(username=f"rc2u{i}", password="pass")
             client = APIClient()
             client.force_authenticate(user=u)
             client.post(f"/posts/{p2.pk}/like/")
+            django_db.close_old_connections()
 
         now = time.time()
-        self.fake_redis.zadd(dirty_posts_key(), {str(p1.pk): now - 10, str(p2.pk): now - 10})
+        self.r.zadd(
+            self.dirty_posts_key(),
+            {str(p1.pk): now - 10, str(p2.pk): now - 10},
+        )
 
         recalculate_dirty_scores()
         merge_global_leaderboard()
 
-        cat_key = category_leaderboard_key("rankconc")
-        s1 = self.fake_redis.zscore(cat_key, str(p1.pk))
-        s2 = self.fake_redis.zscore(cat_key, str(p2.pk))
+        cat_key = self.category_leaderboard_key("rankconc")
+        s1 = self.r.zscore(cat_key, str(p1.pk))
+        s2 = self.r.zscore(cat_key, str(p2.pk))
         self.assertIsNotNone(s1)
         self.assertIsNotNone(s2)
         self.assertGreater(s1, s2)

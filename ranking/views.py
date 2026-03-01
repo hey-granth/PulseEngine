@@ -13,12 +13,7 @@ from rest_framework.views import APIView
 
 from posts.models import Post
 from posts.serializers import PostListSerializer
-from ranking.constants import (
-    FEED_CACHE_GLOBAL,
-    GLOBAL_LEADERBOARD_KEY,
-    category_leaderboard_key,
-    feed_cache_category_key,
-)
+import ranking.constants as rc
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +55,13 @@ class GlobalFeedView(APIView):
             r = _get_redis()
 
             # Check cache first
-            cached = r.get(FEED_CACHE_GLOBAL)
+            cached = r.get(rc.FEED_CACHE_GLOBAL)
             if cached:
                 return Response(json.loads(cached))
 
             # Read from global leaderboard
             top_ids_scores = r.zrevrange(
-                GLOBAL_LEADERBOARD_KEY, 0, FEED_SIZE - 1, withscores=True
+                rc.GLOBAL_LEADERBOARD_KEY, 0, FEED_SIZE - 1, withscores=True
             )
 
             if not top_ids_scores:
@@ -75,9 +70,7 @@ class GlobalFeedView(APIView):
                 post_ids = [int(pid) for pid, _ in top_ids_scores]
                 score_map = {int(pid): sc for pid, sc in top_ids_scores}
 
-                posts = Post.objects.select_related("author", "category").filter(
-                    pk__in=post_ids
-                )
+                posts = Post.objects.select_related("author", "category").filter(pk__in=post_ids)
                 posts_dict = {p.pk: p for p in posts}
 
                 # Maintain leaderboard order
@@ -89,7 +82,7 @@ class GlobalFeedView(APIView):
                     item["trending_score"] = score_map.get(item["id"], 0)
 
             # Cache for 60s
-            r.setex(FEED_CACHE_GLOBAL, CACHE_TTL, json.dumps(data))
+            r.setex(rc.FEED_CACHE_GLOBAL, CACHE_TTL, json.dumps(data))
             return Response(data)
 
         except redis_lib.ConnectionError:
@@ -103,7 +96,7 @@ class CategoryFeedView(APIView):
     def get(self, request, slug):
         try:
             r = _get_redis()
-            cache_key = feed_cache_category_key(slug)
+            cache_key = rc.feed_cache_category_key(slug)
 
             # Check cache first
             cached = r.get(cache_key)
@@ -111,10 +104,8 @@ class CategoryFeedView(APIView):
                 return Response(json.loads(cached))
 
             # Read from category leaderboard
-            cat_key = category_leaderboard_key(slug)
-            top_ids_scores = r.zrevrange(
-                cat_key, 0, FEED_SIZE - 1, withscores=True
-            )
+            cat_key = rc.category_leaderboard_key(slug)
+            top_ids_scores = r.zrevrange(cat_key, 0, FEED_SIZE - 1, withscores=True)
 
             if not top_ids_scores:
                 data = _db_fallback_category(slug)
@@ -137,8 +128,5 @@ class CategoryFeedView(APIView):
             return Response(data)
 
         except redis_lib.ConnectionError:
-            logger.warning(
-                "Redis unavailable — falling back to DB for category feed: %s", slug
-            )
+            logger.warning("Redis unavailable — falling back to DB for category feed: %s", slug)
             return Response(_db_fallback_category(slug))
-

@@ -18,8 +18,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 _env_path = BASE_DIR / ".env"
 if not _env_path.is_file():
     raise RuntimeError(
-        f".env file not found at {_env_path}. "
-        "Copy .env.example to .env and fill in the values."
+        f".env file not found at {_env_path}. Copy .env.example to .env and fill in the values."
     )
 load_dotenv(_env_path)
 
@@ -34,11 +33,7 @@ def _require_env(key: str) -> str:
 # ── Core ────────────────────────────────────────────────────────────────────
 SECRET_KEY = _require_env("SECRET_KEY")
 DEBUG = os.environ.get("DEBUG", "False").lower() in ("true", "1", "yes")
-ALLOWED_HOSTS = [
-    h.strip()
-    for h in os.environ.get("ALLOWED_HOSTS", "").split(",")
-    if h.strip()
-]
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()]
 
 # ── Apps ────────────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
@@ -106,26 +101,19 @@ DATABASES = {
 # Enforce ENGINE and sslmode — never allow insecure or non-postgres connection.
 if DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql":
     raise ImproperlyConfigured(
-        f"DATABASE_URL must resolve to a PostgreSQL backend, got: "
-        f"{DATABASES['default']['ENGINE']}"
+        f"DATABASE_URL must resolve to a PostgreSQL backend, got: {DATABASES['default']['ENGINE']}"
     )
 DATABASES["default"].setdefault("OPTIONS", {})
 DATABASES["default"]["OPTIONS"]["sslmode"] = "require"
 
 # ── Test database override ───────────────────────────────────────────────────
-# When running pytest, use a local Postgres test DB instead of Neon.
-# This is populated by conftest.py via TEST_DATABASE_URL or falls back to
-# the individual DATABASE_* env vars. Never runs against the real Neon DB.
+# Django will create a test database on Neon using the name below.
+# The ENGINE and connection parameters are inherited from DATABASE_URL.
+# Never hardcode connection credentials here.
 _test_db_name = os.environ.get("TEST_DB_NAME", "test_pulseengine")
-_test_db_user = os.environ.get("DATABASE_USER", "")
-_test_db_host = os.environ.get("DATABASE_HOST", "")
-_test_db_port = os.environ.get("DATABASE_PORT", "5432")
 DATABASES["default"]["TEST"] = {
     "NAME": _test_db_name,
-    "USER": _test_db_user,
-    "PASSWORD": os.environ.get("DATABASE_PASSWORD", ""),
-    "HOST": _test_db_host,
-    "PORT": _test_db_port,
+    # ENGINE, HOST, PORT, USER, PASSWORD all inherited from the parsed DATABASE_URL.
 }
 # Disable connection pooling during tests — prevents lingering sessions that
 # block DROP DATABASE between runs (especially after concurrency tests).
@@ -174,9 +162,12 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_TASK_ALWAYS_EAGER = True  # Tasks run synchronously during tests
+CELERY_TASK_EAGER_PROPAGATES = True  # Propagate exceptions from eager tasks
 
 # ── Elasticsearch ───────────────────────────────────────────────────────────
 ELASTICSEARCH_URL = _require_env("ELASTICSEARCH_URL")
+# Index name — overridden per-test to isolate test data.
+ES_INDEX_NAME = os.environ.get("ES_INDEX_NAME", "posts")
 
 # ── Django REST Framework ───────────────────────────────────────────────────
 REST_FRAMEWORK = {

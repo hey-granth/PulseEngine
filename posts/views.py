@@ -30,4 +30,3 @@ class PostDetailView(generics.RetrieveAPIView):
 
     queryset = Post.objects.select_related("author", "category").all()
     serializer_class = PostListSerializer
-

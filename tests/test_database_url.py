@@ -1,6 +1,6 @@
 """
 Tests for DATABASE_URL configuration enforcement and /health/ endpoint.
-No test connects to Neon — health tests use the test database.
+Health tests use real services (DB, Redis, and Elasticsearch).
 """
 
 import os
@@ -36,6 +36,7 @@ class TestDatabaseURLEnforcement(SimpleTestCase):
 
     def test_database_url_present_sets_postgresql_engine(self):
         from django.conf import settings
+
         self.assertEqual(
             settings.DATABASES["default"]["ENGINE"],
             "django.db.backends.postgresql",
@@ -43,11 +44,13 @@ class TestDatabaseURLEnforcement(SimpleTestCase):
 
     def test_ssl_mode_is_enforced(self):
         from django.conf import settings
+
         opts = settings.DATABASES["default"].get("OPTIONS", {})
         self.assertEqual(opts.get("sslmode"), "require")
 
     def test_conn_max_age_is_set(self):
         from django.conf import settings
+
         # CONN_MAX_AGE is 600 in production. During test runs it is overridden
         # to 0 to prevent lingering connections after concurrency tests.
         # Both values are valid — assert it is explicitly configured (not None).
@@ -57,28 +60,32 @@ class TestDatabaseURLEnforcement(SimpleTestCase):
 
     def test_no_sqlite_in_databases(self):
         from django.conf import settings
+
         for alias, cfg in settings.DATABASES.items():
             self.assertNotIn("sqlite", cfg.get("ENGINE", "").lower())
 
     def test_test_database_overrides_neon(self):
         from django.conf import settings
+
         test_cfg = settings.DATABASES["default"].get("TEST", {})
         self.assertTrue(test_cfg, "DATABASES['default']['TEST'] must be set")
         self.assertTrue(test_cfg.get("NAME"), "TEST['NAME'] must be set")
         db_url = os.environ.get("DATABASE_URL", "")
         if "neon.tech" in db_url:
             from urllib.parse import urlparse
+
             neon_name = urlparse(db_url).path.lstrip("/")
             self.assertNotEqual(
-                test_cfg["NAME"], neon_name,
+                test_cfg["NAME"],
+                neon_name,
                 "TEST['NAME'] must differ from Neon DB name",
             )
 
 
 class TestHealthEndpoint(TestCase):
-    """Tests for GET /health/"""
+    """Tests for GET /health/ — checks DB, Redis, and Elasticsearch."""
 
-    def test_health_returns_200_when_db_reachable(self):
+    def test_health_returns_200_when_all_services_reachable(self):
         response = self.client.get("/health/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
@@ -101,6 +108,33 @@ class TestHealthEndpoint(TestCase):
         self.assertIn("database", data["detail"].lower())
         self.assertNotIn("password", str(data).lower())
         self.assertNotIn("DATABASE_URL", str(data))
+
+    def test_health_returns_500_when_redis_unreachable(self):
+        import redis as redis_lib
+
+        with patch("pulseengine.health.redis_lib.Redis.from_url") as mock_redis_cls:
+            mock_redis_inst = MagicMock()
+            mock_redis_inst.ping.side_effect = redis_lib.ConnectionError("redis down")
+            mock_redis_cls.return_value = mock_redis_inst
+
+            response = self.client.get("/health/")
+
+        self.assertEqual(response.status_code, 500)
+        data = response.json()
+        self.assertEqual(data["status"], "error")
+        self.assertIn("redis", data["detail"].lower())
+
+    def test_health_returns_500_when_elasticsearch_unreachable(self):
+        mock_es = MagicMock()
+        mock_es.ping.side_effect = Exception("es down")
+        # get_connection returns the mock (no KeyError), then ping() raises
+        with patch("pulseengine.health.es_connections.get_connection", return_value=mock_es):
+            response = self.client.get("/health/")
+
+        self.assertEqual(response.status_code, 500)
+        data = response.json()
+        self.assertEqual(data["status"], "error")
+        self.assertIn("elasticsearch", data["detail"].lower())
 
     def test_health_response_contains_no_credentials(self):
         response = self.client.get("/health/")

@@ -14,12 +14,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from posts.models import Post
-from ranking.constants import (
-    GLOBAL_LEADERBOARD_KEY,
-    category_leaderboard_key,
-    dirty_posts_key,
-    engagement_hash_key,
-)
+import ranking.constants as rc
 from ranking.fraud import check_fraud
 from ranking.scoring import compute_score
 
@@ -45,17 +40,14 @@ def recalculate_dirty_scores():
     cutoff = time.time() - 5.0
 
     # Get posts that have been dirty for at least 5 seconds
-    dirty_members = r.zrangebyscore(dirty_posts_key(), "-inf", cutoff)
+    dirty_members = r.zrangebyscore(rc.dirty_posts_key(), "-inf", cutoff)
     if not dirty_members:
         return
 
     post_ids = [int(pid) for pid in dirty_members]
 
     # Bulk fetch posts with category info
-    posts = {
-        p.pk: p
-        for p in Post.objects.select_related("category").filter(pk__in=post_ids)
-    }
+    posts = {p.pk: p for p in Post.objects.select_related("category").filter(pk__in=post_ids)}
 
     now = timezone.now()
     pipe = r.pipeline()
@@ -64,11 +56,11 @@ def recalculate_dirty_scores():
         post = posts.get(post_id)
         if post is None:
             # Post deleted — clean up
-            pipe.zrem(dirty_posts_key(), str(post_id))
+            pipe.zrem(rc.dirty_posts_key(), str(post_id))
             continue
 
         # Read engagement counters
-        counters = r.hgetall(engagement_hash_key(post_id))
+        counters = r.hgetall(rc.engagement_hash_key(post_id))
         likes = int(counters.get("likes", 0))
         comments = int(counters.get("comments", 0))
         shares = int(counters.get("shares", 0))
@@ -85,11 +77,11 @@ def recalculate_dirty_scores():
         score *= fraud_multiplier
 
         # Update category leaderboard
-        cat_key = category_leaderboard_key(post.category.slug)
+        cat_key = rc.category_leaderboard_key(post.category.slug)
         pipe.zadd(cat_key, {str(post_id): score})
 
         # Remove from dirty set
-        pipe.zrem(dirty_posts_key(), str(post_id))
+        pipe.zrem(rc.dirty_posts_key(), str(post_id))
 
     pipe.execute()
     logger.info("Recalculated scores for %d posts.", len(post_ids))
@@ -115,7 +107,7 @@ def merge_global_leaderboard():
     merged = {}  # post_id_str -> score
 
     for slug in category_slugs:
-        cat_key = category_leaderboard_key(slug)
+        cat_key = rc.category_leaderboard_key(slug)
         # Top 50 from each category (highest scores)
         top_entries = r.zrevrange(cat_key, 0, 49, withscores=True)
         for post_id_str, score in top_entries:
@@ -125,29 +117,23 @@ def merge_global_leaderboard():
 
     if not merged:
         # No data — clear global
-        r.delete(GLOBAL_LEADERBOARD_KEY)
+        r.delete(rc.GLOBAL_LEADERBOARD_KEY)
         return
 
     # Exclude flagged posts
     post_ids = [int(pid) for pid in merged.keys()]
     flagged_ids = set(
-        Post.objects.filter(pk__in=post_ids, is_flagged=True).values_list(
-            "pk", flat=True
-        )
+        Post.objects.filter(pk__in=post_ids, is_flagged=True).values_list("pk", flat=True)
     )
 
     # Build final mapping
-    final = {
-        pid_str: score
-        for pid_str, score in merged.items()
-        if int(pid_str) not in flagged_ids
-    }
+    final = {pid_str: score for pid_str, score in merged.items() if int(pid_str) not in flagged_ids}
 
     # Replace global leaderboard atomically via pipeline
     pipe = r.pipeline()
-    pipe.delete(GLOBAL_LEADERBOARD_KEY)
+    pipe.delete(rc.GLOBAL_LEADERBOARD_KEY)
     if final:
-        pipe.zadd(GLOBAL_LEADERBOARD_KEY, final)
+        pipe.zadd(rc.GLOBAL_LEADERBOARD_KEY, final)
     pipe.execute()
 
     logger.info(
@@ -155,4 +141,3 @@ def merge_global_leaderboard():
         len(final),
         len(flagged_ids),
     )
-

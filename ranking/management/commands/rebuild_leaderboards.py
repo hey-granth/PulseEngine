@@ -7,18 +7,13 @@ Fully rebuilds all ranking state from the database.
 import redis as redis_lib
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.utils import timezone
 
 from categories.models import Category
 from engagement.models import EngagementEvent
 from posts.models import Post
-from ranking.constants import (
-    GLOBAL_LEADERBOARD_KEY,
-    category_leaderboard_key,
-    dirty_posts_key,
-    engagement_hash_key,
-)
+import ranking.constants as rc
 from ranking.scoring import compute_score
 
 
@@ -32,30 +27,25 @@ class Command(BaseCommand):
         self.stdout.write("Clearing existing ranking keys...")
 
         # Clear dirty posts
-        r.delete(dirty_posts_key())
+        r.delete(rc.dirty_posts_key())
 
         # Clear global leaderboard
-        r.delete(GLOBAL_LEADERBOARD_KEY)
+        r.delete(rc.GLOBAL_LEADERBOARD_KEY)
 
         # Clear all category leaderboards
         categories = list(Category.objects.all())
         for cat in categories:
-            r.delete(category_leaderboard_key(cat.slug))
+            r.delete(rc.category_leaderboard_key(cat.slug))
 
         # Clear all engagement hashes
-        posts = list(
-            Post.objects.select_related("category").all()
-        )
+        posts = list(Post.objects.select_related("category").all())
         for post in posts:
-            r.delete(engagement_hash_key(post.pk))
+            r.delete(rc.engagement_hash_key(post.pk))
 
         self.stdout.write(f"Rebuilding engagement counters for {len(posts)} posts...")
 
         # Aggregate engagement events per post per type
-        aggregation = (
-            EngagementEvent.objects.values("post_id", "type")
-            .annotate(count=Count("id"))
-        )
+        aggregation = EngagementEvent.objects.values("post_id", "type").annotate(count=Count("id"))
 
         # Build counters dict: {post_id: {likes: N, comments: N, shares: N}}
         counters = {}
@@ -83,7 +73,7 @@ class Command(BaseCommand):
             # Set engagement hash
             if any(v > 0 for v in c.values()):
                 pipe.hset(
-                    engagement_hash_key(pid),
+                    rc.engagement_hash_key(pid),
                     mapping={
                         "likes": c["likes"],
                         "comments": c["comments"],
@@ -107,15 +97,13 @@ class Command(BaseCommand):
         pipe = r.pipeline()
         for slug, scores in category_scores.items():
             if scores:
-                pipe.zadd(category_leaderboard_key(slug), scores)
+                pipe.zadd(rc.category_leaderboard_key(slug), scores)
         pipe.execute()
 
         self.stdout.write("Rebuilding global leaderboard...")
 
         # Merge top 50 from each category, exclude flagged
-        flagged_ids = set(
-            Post.objects.filter(is_flagged=True).values_list("pk", flat=True)
-        )
+        flagged_ids = set(Post.objects.filter(is_flagged=True).values_list("pk", flat=True))
 
         merged = {}
         for slug, scores in category_scores.items():
@@ -127,9 +115,9 @@ class Command(BaseCommand):
                         merged[pid_str] = score
 
         pipe = r.pipeline()
-        pipe.delete(GLOBAL_LEADERBOARD_KEY)
+        pipe.delete(rc.GLOBAL_LEADERBOARD_KEY)
         if merged:
-            pipe.zadd(GLOBAL_LEADERBOARD_KEY, merged)
+            pipe.zadd(rc.GLOBAL_LEADERBOARD_KEY, merged)
         pipe.execute()
 
         self.stdout.write(
@@ -138,4 +126,3 @@ class Command(BaseCommand):
                 f"and global leaderboard with {len(merged)} posts."
             )
         )
-

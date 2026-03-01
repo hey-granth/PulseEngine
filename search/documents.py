@@ -3,6 +3,7 @@ Elasticsearch document definition for Post.
 Does NOT store trending_score in ES.
 """
 
+from django.conf import settings
 from elasticsearch_dsl import Document, Text, Keyword, Date, Integer
 
 
@@ -14,11 +15,16 @@ class PostDocument(Document):
     created_at = Date()
 
     class Index:
-        name = "posts"
+        name = "posts"  # overridden at runtime via _index._name
         settings = {
             "number_of_shards": 1,
             "number_of_replicas": 0,
         }
+
+    @classmethod
+    def get_index_name(cls) -> str:
+        """Return the active index name (respects ES_INDEX_NAME setting)."""
+        return getattr(settings, "ES_INDEX_NAME", "posts")
 
     @classmethod
     def from_post(cls, post):
@@ -32,4 +38,3 @@ class PostDocument(Document):
             created_at=post.created_at,
         )
         return doc
-

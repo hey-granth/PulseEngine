@@ -50,4 +50,3 @@ def check_fraud(post_id: int, r: redis_lib.Redis | None = None) -> tuple[float, 
         multiplier = 0.5
 
     return multiplier, should_flag
-

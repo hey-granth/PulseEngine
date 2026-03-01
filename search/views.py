@@ -21,16 +21,17 @@ from rest_framework.views import APIView
 
 from posts.models import Post
 from posts.serializers import PostListSerializer
-from ranking.constants import GLOBAL_LEADERBOARD_KEY
+import ranking.constants as rc
+from search.documents import PostDocument
 
 logger = logging.getLogger(__name__)
 
 
 def _ensure_es_connection():
-    if not connections.get_connection("default", required=False):
-        connections.create_connection(
-            alias="default", hosts=[settings.ELASTICSEARCH_URL]
-        )
+    try:
+        connections.get_connection("default")
+    except KeyError:
+        connections.create_connection(alias="default", hosts=[settings.ELASTICSEARCH_URL])
 
 
 def _get_redis():
@@ -51,12 +52,11 @@ class SearchView(APIView):
             _ensure_es_connection()
         except Exception:
             logger.exception("Failed to connect to Elasticsearch.")
-            return Response(
-                {"detail": "Search service unavailable."}, status=503
-            )
+            return Response({"detail": "Search service unavailable."}, status=503)
 
-        # Build ES query
-        s = Search(index="posts")
+        # Build ES query using the active index name (test-overridable)
+        index_name = PostDocument.get_index_name()
+        s = Search(index=index_name)
         es_query = ESQ("match", content=query)
 
         if category:
@@ -90,9 +90,7 @@ class SearchView(APIView):
         # Normalize ES scores
         max_es_score = max(score for _, score in es_results)
         if max_es_score > 0:
-            es_normalized = {
-                pid: score / max_es_score for pid, score in es_results
-            }
+            es_normalized = {pid: score / max_es_score for pid, score in es_results}
         else:
             es_normalized = {pid: 0 for pid, _ in es_results}
 
@@ -104,7 +102,7 @@ class SearchView(APIView):
             post_ids = [pid for pid, _ in es_results]
             pipe = r.pipeline()
             for pid in post_ids:
-                pipe.zscore(GLOBAL_LEADERBOARD_KEY, str(pid))
+                pipe.zscore(rc.GLOBAL_LEADERBOARD_KEY, str(pid))
             scores = pipe.execute()
 
             for pid, score in zip(post_ids, scores):
@@ -132,9 +130,7 @@ class SearchView(APIView):
         sorted_ids = sorted(final_scores, key=final_scores.get, reverse=True)[:20]
 
         # Bulk fetch posts
-        posts = Post.objects.select_related("author", "category").filter(
-            pk__in=sorted_ids
-        )
+        posts = Post.objects.select_related("author", "category").filter(pk__in=sorted_ids)
         posts_dict = {p.pk: p for p in posts}
 
         ordered = [posts_dict[pid] for pid in sorted_ids if pid in posts_dict]
@@ -145,4 +141,3 @@ class SearchView(APIView):
             item["search_score"] = round(final_scores.get(item["id"], 0), 4)
 
         return Response(data)
-

@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 
 from engagement.models import EngagementEvent, EngagementType, UserPostLike
 from posts.models import Post
-from ranking.constants import dirty_posts_key, engagement_hash_key
+import ranking.constants as rc
 
 
 def _get_redis():
@@ -33,8 +33,8 @@ def _record_engagement(post, user, engagement_type):
             EngagementType.COMMENT: "comments",
             EngagementType.SHARE: "shares",
         }
-        r.hincrby(engagement_hash_key(post.pk), field_map[engagement_type], 1)
-        r.zadd(dirty_posts_key(), {str(post.pk): time.time()})
+        r.hincrby(rc.engagement_hash_key(post.pk), field_map[engagement_type], 1)
+        r.zadd(rc.dirty_posts_key(), {str(post.pk): time.time()})
     except redis_lib.ConnectionError:
         # Redis down — engagement recorded in DB; ranking worker will catch up
         pass
@@ -82,4 +82,3 @@ class ShareView(APIView):
             {"detail": "Shared.", "post_id": post.pk, "type": "SHARE"},
             status=status.HTTP_201_CREATED,
         )
-

@@ -12,7 +12,7 @@ def compute_score(likes: int, comments: int, shares: int, age_hours: float) -> f
     """
     weighted = likes * 3 + comments * 5 + shares * 8
     age_hours = max(1.0, age_hours)
-    return weighted / (age_hours ** 1.5)
+    return weighted / (age_hours**1.5)
 
 
 def apply_fraud_penalty(
@@ -47,4 +47,3 @@ def apply_fraud_penalty(
         score *= 0.5
 
     return score, should_flag
-

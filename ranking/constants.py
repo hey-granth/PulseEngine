@@ -30,4 +30,3 @@ FEED_CACHE_GLOBAL = "cache:feed:global"
 
 def feed_cache_category_key(slug: str) -> str:
     return f"cache:feed:category:{slug}"
-

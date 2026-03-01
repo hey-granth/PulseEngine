@@ -13,7 +13,6 @@ djangorestframework==3.16.1
 elastic-transport==8.17.1
 elasticsearch==8.19.3
 elasticsearch-dsl==8.18.0
-fakeredis==2.34.1
 gunicorn==22.0.0
 kombu==5.6.2
 packaging==26.0

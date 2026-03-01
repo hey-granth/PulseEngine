@@ -14,4 +14,3 @@ class EngagementEventAdmin(admin.ModelAdmin):
 class UserPostLikeAdmin(admin.ModelAdmin):
     list_display = ["id", "post", "user", "created_at"]
     raw_id_fields = ["post", "user"]
-

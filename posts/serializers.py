@@ -27,4 +27,3 @@ class PostListSerializer(serializers.ModelSerializer):
             "is_flagged",
         ]
         read_only_fields = fields
-

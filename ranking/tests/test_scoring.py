@@ -8,7 +8,6 @@ from ranking.scoring import apply_fraud_penalty, compute_score
 
 
 class TestComputeScore(SimpleTestCase):
-
     def test_basic_score(self):
         # weighted = 10*3 + 5*5 + 2*8 = 71; 71 / (2**1.5) ≈ 25.10
         score = compute_score(likes=10, comments=5, shares=2, age_hours=2.0)
@@ -28,9 +27,9 @@ class TestComputeScore(SimpleTestCase):
         self.assertEqual(compute_score(likes=0, comments=0, shares=0, age_hours=10.0), 0.0)
 
     def test_shares_weighted_highest(self):
-        s_likes    = compute_score(likes=1, comments=0, shares=0, age_hours=1.0)
+        s_likes = compute_score(likes=1, comments=0, shares=0, age_hours=1.0)
         s_comments = compute_score(likes=0, comments=1, shares=0, age_hours=1.0)
-        s_shares   = compute_score(likes=0, comments=0, shares=1, age_hours=1.0)
+        s_shares = compute_score(likes=0, comments=0, shares=1, age_hours=1.0)
         self.assertGreater(s_shares, s_comments)
         self.assertGreater(s_comments, s_likes)
 
@@ -55,7 +54,6 @@ class TestComputeScore(SimpleTestCase):
 
 
 class TestApplyFraudPenalty(SimpleTestCase):
-
     def test_normal_velocity_no_penalty(self):
         score, flagged = apply_fraud_penalty(100.0, event_count=10, window_seconds=60.0)
         self.assertEqual(score, 100.0)

@@ -7,4 +7,3 @@ urlpatterns = [
     path("posts/<int:post_id>/comment/", CommentView.as_view(), name="post-comment"),
     path("posts/<int:post_id>/share/", ShareView.as_view(), name="post-share"),
 ]
-

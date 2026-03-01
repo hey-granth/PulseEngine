@@ -62,4 +62,3 @@ class UserPostLike(models.Model):
 
     def __str__(self):
         return f"Like: User {self.user_id} → Post {self.post_id}"
-
